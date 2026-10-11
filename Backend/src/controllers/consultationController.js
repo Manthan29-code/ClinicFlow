@@ -1,151 +1,124 @@
-const mongoose = require('mongoose');
-const Consultation = require('../models/Consultation');
-const Appointment = require('../models/Appointment');
-const Patient = require('../models/Patient');
+const { sequelize, Consultation, Appointment, Patient, Doctor } = require('../models');
 const { successResponse, errorResponse } = require('../utils/response');
+const { formatConsultation } = require('../utils/formatConsultation');
+const { isValidId } = require('../utils/ids');
 
-// Helper to populate consultation appointment and doctor
-const populateConsultation = (query) => {
-  return query
-    .populate({
-      path: 'appointment',
-      select: '_id appointmentDateTime status doctor',
-      populate: {
-        path: 'doctor',
-        select: '_id name category'
-      }
-    })
-    .select('_id vitals notes isCompleted consultationDate appointment');
-};
+const consultationIncludes = [{
+  model: Appointment,
+  as: 'appointment',
+  attributes: ['id', 'appointmentDateTime', 'status', 'doctorId'],
+  include: [{
+    model: Doctor,
+    as: 'doctor',
+    attributes: ['id', 'name', 'category']
+  }]
+}];
 
-// @desc    Create / record vitals and notes for a consultation
-// @route   POST /api/consultations
-// @access  Private
 const createConsultation = async (req, res, next) => {
   try {
     const { appointment, vitals, notes } = req.body;
 
-    if (!appointment || !vitals || !notes) {
+    if (!appointment || !vitals || typeof vitals !== 'object' || vitals.temperature === undefined ||
+        vitals.pulse === undefined || typeof notes !== 'string' || !notes.trim()) {
       return errorResponse(res, 400, 'Appointment ID, vitals, and notes are required');
     }
+    if (!isValidId(appointment)) return errorResponse(res, 400, 'Invalid appointment ID format');
 
-    if (!mongoose.Types.ObjectId.isValid(appointment)) {
-      return errorResponse(res, 400, 'Invalid appointment ID format');
-    }
-
-    const targetAppointment = await Appointment.findById(appointment);
-    if (!targetAppointment) {
-      return errorResponse(res, 404, 'Appointment not found');
-    }
-
+    const targetAppointment = await Appointment.findByPk(appointment);
+    if (!targetAppointment) return errorResponse(res, 404, 'Appointment not found');
     if (targetAppointment.status !== 'Scheduled') {
       return errorResponse(res, 409, 'Appointment already completed');
     }
 
-    const existingConsultation = await Consultation.findOne({ appointment });
+    const existingConsultation = await Consultation.findOne({ where: { appointmentId: appointment } });
     if (existingConsultation) {
       return errorResponse(res, 409, 'Consultation already exists for this appointment');
     }
 
     const consultation = await Consultation.create({
-      appointment,
-      vitals: {
-        temperature: Number(vitals.temperature),
-        pulse: Number(vitals.pulse)
-      },
+      appointmentId: appointment,
+      temperature: Number(vitals.temperature),
+      pulse: Number(vitals.pulse),
       notes: notes.trim(),
       isCompleted: false
     });
 
-    const populatedConsultation = await populateConsultation(Consultation.findById(consultation._id));
-
-    return successResponse(res, 201, 'Consultation saved successfully', populatedConsultation);
+    const populated = await Consultation.findByPk(consultation.id, { include: consultationIncludes });
+    return successResponse(res, 201, 'Consultation saved successfully', formatConsultation(populated));
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Mark a consultation as completed and update the appointment status
-// @route   PATCH /api/consultations/:id/complete
-// @access  Private
 const completeConsultation = async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!isValidId(id)) return errorResponse(res, 400, 'Invalid consultation ID format');
 
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return errorResponse(res, 400, 'Invalid consultation ID format');
-    }
+    const updatedId = await sequelize.transaction(async (transaction) => {
+      const consultation = await Consultation.findByPk(id, {
+        transaction,
+        lock: transaction.LOCK.UPDATE
+      });
 
-    const consultation = await Consultation.findById(id);
-    if (!consultation) {
-      return errorResponse(res, 404, 'Consultation not found');
-    }
+      if (!consultation) {
+        const error = new Error('Consultation not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (consultation.isCompleted) {
+        const error = new Error('Consultation already completed');
+        error.statusCode = 409;
+        throw error;
+      }
 
-    if (consultation.isCompleted) {
-      return errorResponse(res, 409, 'Consultation already completed');
-    }
+      consultation.isCompleted = true;
+      await consultation.save({ transaction });
 
-    // Step 1: Set consultation as completed
-    consultation.isCompleted = true;
-    await consultation.save();
+      await Appointment.update(
+        { status: 'Completed' },
+        { where: { id: consultation.appointmentId }, transaction }
+      );
 
-    // Step 2: Update linked appointment status to Completed
-    await Appointment.findByIdAndUpdate(consultation.appointment, {
-      status: 'Completed'
+      return consultation.id;
     });
 
-    const updatedConsultation = await populateConsultation(Consultation.findById(consultation._id));
-
-    return successResponse(res, 200, 'Consultation completed successfully', updatedConsultation);
+    const updated = await Consultation.findByPk(updatedId, { include: consultationIncludes });
+    return successResponse(res, 200, 'Consultation completed successfully', formatConsultation(updated));
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get completed consultation history for a specific patient
-// @route   GET /api/patients/:patientId/consultations
-// @access  Private
 const getPatientConsultations = async (req, res, next) => {
   try {
     const { patientId } = req.params;
+    if (!isValidId(patientId)) return errorResponse(res, 400, 'Invalid patient ID format');
 
-    if (!mongoose.Types.ObjectId.isValid(patientId)) {
-      return errorResponse(res, 400, 'Invalid patient ID format');
-    }
+    const patient = await Patient.findByPk(patientId);
+    if (!patient) return errorResponse(res, 404, 'Patient not found');
 
-    const patient = await Patient.findById(patientId);
-    if (!patient) {
-      return errorResponse(res, 404, 'Patient not found');
-    }
+    const consultations = await Consultation.findAll({
+      where: { isCompleted: true },
+      include: [{
+        model: Appointment,
+        as: 'appointment',
+        where: { patientId },
+        required: true,
+        attributes: ['id', 'appointmentDateTime', 'status', 'doctorId'],
+        include: [{
+          model: Doctor,
+          as: 'doctor',
+          attributes: ['id', 'name', 'category']
+        }]
+      }],
+      order: [['consultationDate', 'DESC'], ['createdAt', 'DESC']]
+    });
 
-    // Find all appointments for this patient
-    const appointments = await Appointment.find({ patient: patientId }).select('_id');
-    const appointmentIds = appointments.map((app) => app._id);
-
-    // Find completed consultations for those appointments
-    const consultations = await Consultation.find({
-      appointment: { $in: appointmentIds },
-      isCompleted: true
-    })
-      .populate({
-        path: 'appointment',
-        select: '_id appointmentDateTime status doctor',
-        populate: {
-          path: 'doctor',
-          select: '_id name category'
-        }
-      })
-      .sort({ consultationDate: -1, createdAt: -1 })
-      .select('_id vitals notes isCompleted consultationDate appointment');
-
-    return successResponse(res, 200, 'Patient consultation history fetched', consultations);
+    return successResponse(res, 200, 'Patient consultation history fetched', consultations.map(formatConsultation));
   } catch (error) {
     next(error);
   }
 };
 
-module.exports = {
-  createConsultation,
-  completeConsultation,
-  getPatientConsultations
-};
+module.exports = { createConsultation, completeConsultation, getPatientConsultations };

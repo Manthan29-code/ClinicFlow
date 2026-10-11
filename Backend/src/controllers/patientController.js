@@ -1,53 +1,43 @@
-const Patient = require('../models/Patient');
+const { Op } = require('sequelize');
+const { Patient } = require('../models');
 const { successResponse, errorResponse } = require('../utils/response');
-const { escapeRegex } = require('../utils/dateRange');
+const { isValidId } = require('../utils/ids');
 
-// @desc    Register a new patient
-// @route   POST /api/patients
-// @access  Private
 const createPatient = async (req, res, next) => {
   try {
     const { name, gender, age, phone } = req.body;
-
     const patient = await Patient.create({
-      name: name?.trim(),
+      name: typeof name === 'string' ? name.trim() : name,
       gender,
-      age: Number(age),
-      phone: phone?.trim()
+      age: age === '' || age === null || age === undefined ? age : Number(age),
+      phone: typeof phone === 'string' ? phone.trim() : phone
     });
 
-    return successResponse(res, 201, 'Patient registered successfully', {
-      _id: patient._id,
-      name: patient.name,
-      gender: patient.gender,
-      age: patient.age,
-      phone: patient.phone,
-      createdAt: patient.createdAt
-    });
+    return successResponse(res, 201, 'Patient registered successfully', patient);
   } catch (error) {
     next(error);
   }
 };
 
-// @desc    Get all patients or search by name / phone
-// @route   GET /api/patients
-// @access  Private
 const getPatients = async (req, res, next) => {
   try {
-    const { search } = req.query;
-    let query = {};
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const where = {};
 
-    if (search && search.trim() !== '') {
-      const sanitizedSearch = escapeRegex(search.trim());
-      const searchRegex = new RegExp(sanitizedSearch, 'i');
-      query = {
-        $or: [{ name: searchRegex }, { phone: searchRegex }]
-      };
+    if (search) {
+      const escaped = search.replace(/[\\%_]/g, '\\$&');
+      const pattern = `%${escaped}%`;
+      where[Op.or] = [
+        { name: { [Op.iLike]: pattern } },
+        { phone: { [Op.iLike]: pattern } }
+      ];
     }
 
-    const patients = await Patient.find(query)
-      .sort({ createdAt: -1 })
-      .select('_id name gender age phone createdAt');
+    const patients = await Patient.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      attributes: ['id', 'name', 'gender', 'age', 'phone', 'createdAt']
+    });
 
     return successResponse(res, 200, 'Patients fetched', patients);
   } catch (error) {
@@ -55,27 +45,20 @@ const getPatients = async (req, res, next) => {
   }
 };
 
-// @desc    Get single patient by ID
-// @route   GET /api/patients/:id
-// @access  Private
 const getPatientById = async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!isValidId(id)) return errorResponse(res, 400, 'Invalid ID');
 
-    const patient = await Patient.findById(id).select('_id name gender age phone createdAt');
+    const patient = await Patient.findByPk(id, {
+      attributes: ['id', 'name', 'gender', 'age', 'phone', 'createdAt']
+    });
 
-    if (!patient) {
-      return errorResponse(res, 404, 'Patient not found');
-    }
-
+    if (!patient) return errorResponse(res, 404, 'Patient not found');
     return successResponse(res, 200, 'Patient fetched', patient);
   } catch (error) {
     next(error);
   }
 };
 
-module.exports = {
-  createPatient,
-  getPatients,
-  getPatientById
-};
+module.exports = { createPatient, getPatients, getPatientById };

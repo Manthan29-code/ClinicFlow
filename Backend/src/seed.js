@@ -1,10 +1,10 @@
-const dotenv = require('dotenv');
-const mongoose = require('mongoose');
 const path = require('path');
-const Doctor = require('./models/Doctor');
+const dotenv = require('dotenv');
 
-// Load environment variables from .env if present
+// Load env before importing models because the Sequelize instance reads process.env.
 dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+const { sequelize, Doctor } = require('./models');
 
 const doctorsSeedData = [
   { name: 'Dr. Rajesh Sharma', category: 'General Physician' },
@@ -16,29 +16,34 @@ const doctorsSeedData = [
 ];
 
 const seedDatabase = async () => {
+  const fresh = process.argv.includes('--fresh');
+
   try {
-    const mongoURI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/opd_mini';
-    await mongoose.connect(mongoURI);
-    console.log('Connected to MongoDB for seeding...');
+    await sequelize.authenticate();
+    console.log('Connected to PostgreSQL for seeding...');
+    await sequelize.sync();
 
-    // Clear existing doctors
-    await Doctor.deleteMany();
-    console.log('Cleared existing doctors collection.');
+    if (fresh) {
+      console.warn('--fresh: clearing doctors. CASCADE also removes appointments and consultations.');
+      await Doctor.destroy({ truncate: true, cascade: true });
+      console.log('Cleared existing doctors table.');
+    }
 
-    // Insert initial doctors
-    const createdDoctors = await Doctor.insertMany(doctorsSeedData);
-    console.log(`Successfully seeded ${createdDoctors.length} doctors:`);
-    createdDoctors.forEach((doc) => {
-      console.log(` - ${doc.name} (${doc.category})`);
-    });
+    let created = 0;
+    for (const data of doctorsSeedData) {
+      const [, wasCreated] = await Doctor.findOrCreate({ where: data });
+      if (wasCreated) created += 1;
+    }
 
-    console.log('Seeding completed successfully.');
-    await mongoose.disconnect();
+    console.log(`Seeding completed. ${created} new doctor(s) added.`);
+    await sequelize.close();
     process.exit(0);
   } catch (error) {
     console.error('Seeding error:', error.message);
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.disconnect();
+    try {
+      await sequelize.close();
+    } catch (_) {
+      // Ignore errors while closing after a failed seed.
     }
     process.exit(1);
   }

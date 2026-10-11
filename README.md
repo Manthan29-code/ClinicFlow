@@ -4,7 +4,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-v4-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 
 > **ClinicFlow** is a streamlined, full-stack Outpatient Department (OPD) management web application designed for clinics, medical practitioners, and reception staff to efficiently handle patient registrations, doctor appointments, vital recordings, and consultation histories.
 
@@ -75,20 +75,20 @@ flowchart TD
         Controllers -.-> ErrorMiddleware
     end
 
-    subgraph Database["Database (MongoDB Atlas)"]
-        Mongoose["Mongoose ODM Models"]
+    subgraph Database["Database (PostgreSQL)"]
+        Sequelize["Sequelize ORM"]
         UserCol[("Users")]
         PatientCol[("Patients")]
         DoctorCol[("Doctors")]
         ApptCol[("Appointments")]
         ConsultCol[("Consultations")]
         
-        Controllers --> Mongoose
-        Mongoose --> UserCol
-        Mongoose --> PatientCol
-        Mongoose --> DoctorCol
-        Mongoose --> ApptCol
-        Mongoose --> ConsultCol
+        Controllers --> Sequelize
+        Sequelize --> UserCol
+        Sequelize --> PatientCol
+        Sequelize --> DoctorCol
+        Sequelize --> ApptCol
+        Sequelize --> ConsultCol
     end
 ```
 
@@ -105,7 +105,7 @@ ClinicFlow/
 │   ├── package.json               # Backend dependencies & scripts
 │   └── src/
 │       ├── config/
-│       │   └── db.js              # MongoDB Mongoose connection
+│       │   └── db.js              # PostgreSQL Sequelize connection
 │       ├── models/                # Schemas (User, Patient, Doctor, Appointment, Consultation)
 │       ├── controllers/           # Business logic per resource
 │       ├── routes/                # Express API routes mounted under /api
@@ -146,8 +146,8 @@ ClinicFlow/
 | Layer | Technology |
 |---|---|
 | **Frontend** | React 19, Vite, Tailwind CSS v4, Redux Toolkit, React Router DOM, Axios, Lucide React, React Hot Toast, Framer Motion |
-| **Backend** | Node.js, Express.js, Mongoose, JSONWebToken (JWT), CORS, Dotenv |
-| **Database** | MongoDB Atlas |
+| **Backend** | Node.js, Express.js, Sequelize, JSONWebToken (JWT), CORS, Dotenv |
+| **Database** | PostgreSQL |
 | **Hosting** | Vercel (Frontend), Render (Backend) |
 
 ---
@@ -156,7 +156,7 @@ ClinicFlow/
 
 ### Prerequisites
 - [Node.js](https://nodejs.org/) (v18 or higher)
-- [MongoDB](https://www.mongodb.com/) (Local instance or MongoDB Atlas connection string)
+- [PostgreSQL 14+](https://www.postgresql.org/download/) (local installation or hosted connection string)
 - Git
 
 ---
@@ -173,21 +173,29 @@ ClinicFlow/
    npm install
    ```
 
-3. Create a `.env` file based on `.env.example`:
+3. Create a PostgreSQL database named `opd_mini` (for example, using `createdb opd_mini` or `CREATE DATABASE opd_mini;` in `psql`).
+
+4. Create a `.env` file based on `.env.example` and set your local PostgreSQL credentials:
    ```env
    PORT=5000
-   MONGO_URI=mongodb://127.0.0.1:27017/opd_mini
-   JWT_SECRET=your_super_secret_jwt_key
+   NODE_ENV=development
+   DB_HOST=127.0.0.1
+   DB_PORT=5432
+   DB_NAME=opd_mini
+   DB_USER=postgres
+   DB_PASSWORD=your_postgres_password
+   DB_SSL=false
+   JWT_SECRET=replace_with_a_long_random_string
    JWT_EXPIRES_IN=7d
    CORS_ORIGIN=http://localhost:5173
    ```
 
-4. Seed initial doctors into MongoDB:
+5. Seed initial doctors into PostgreSQL:
    ```bash
    npm run seed
    ```
 
-5. Start the backend development server:
+6. Start the backend development server:
    ```bash
    npm run dev
    ```
